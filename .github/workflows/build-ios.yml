@@ -14,34 +14,83 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 18
-
-      - name: Install Capacitor & Dependencies
+      - name: Setup Swift iOS App
         run: |
-          npm init -y
-          npm install @capacitor/core @capacitor/cli @capacitor/ios
-          npx cap init "WebhookApp" "com.myapp.webhook" --web-dir www
-          npx cap add ios
-          npx cap copy ios
+          mkdir -p WebhookApp/WebhookApp
+          
+          # יצירת App base
+          cat << 'EOF' > WebhookApp/WebhookApp/App.swift
+          import SwiftUI
+          import WebKit
 
-      - name: Build Xcode App Binary
-        run: |
-          cd ios/App
-          xcodebuild -workspace App.xcworkspace \
-                     -scheme App \
-                     -sdk iphoneos \
-                     -configuration Release \
-                     CODE_SIGNING_ALLOWED=NO \
-                     CODE_SIGNING_REQUIRED=NO \
-                     clean build
+          struct WebView: UIViewRepresentable {
+              func makeUIView(context: Context) -> WKWebView {
+                  let webView = WKWebView()
+                  if let url = Bundle.main.url(forResource: "index", withExtension: "html") {
+                      webView.loadFileURL(url, allowingReadAccessTo: url)
+                  }
+                  return webView
+              }
+              func updateUIView(_ uiView: WKWebView, context: Context) {}
+          }
 
-      - name: Package into IPA
+          @main
+          struct WebhookApp: App {
+              var body: some Scene {
+                  WindowGroup {
+                      WebView()
+                          .ignoresSafeArea()
+                  }
+              }
+          }
+          EOF
+
+          # העתקת קבצי ה-Web
+          cp -r www/* WebhookApp/WebhookApp/
+
+          # יצירת קובץ Info.plist
+          cat << 'EOF' > WebhookApp/WebhookApp/Info.plist
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>CFBundleExecutable</key>
+              <string>WebhookApp</string>
+              <key>CFBundleIdentifier</key>
+              <string>com.myapp.webhook</string>
+              <key>CFBundleName</key>
+              <string>WebhookApp</string>
+              <key>CFBundlePackageType</key>
+              <string>APPL</string>
+              <key>CFBundleShortVersionString</key>
+              <string>1.0</string>
+              <key>CFBundleVersion</key>
+              <string>1</string>
+              <key>UILaunchScreen</key>
+              <dict/>
+          </dict>
+          </plist>
+          EOF
+
+      - name: Compile Native iOS Binary
         run: |
-          mkdir -p Payload
-          cp -r ios/App/build/Release-iphoneos/App.app Payload/
+          cd WebhookApp/WebhookApp
+          
+          # קימפול הקוד הבינארי עבור מעבדי ARM64 (אייפון)
+          swiftc -sdk $(xcrun --sdk iphoneos --show-sdk-path) \
+                 -target arm64-apple-ios15.0 \
+                 -emit-executable \
+                 -o WebhookApp \
+                 App.swift
+          
+          # יצירת ה-App Bundle
+          mkdir -p ../../Payload/WebhookApp.app
+          mv WebhookApp ../../Payload/WebhookApp.app/
+          cp Info.plist ../../Payload/WebhookApp.app/
+          cp -r index.html ../../Payload/WebhookApp.app/
+
+      - name: Package to IPA
+        run: |
           zip -r WebhookSender.ipa Payload
 
       - name: Upload IPA Artifact
@@ -49,3 +98,4 @@ jobs:
         with:
           name: WebhookSender-IPA
           path: WebhookSender.ipa
+        
